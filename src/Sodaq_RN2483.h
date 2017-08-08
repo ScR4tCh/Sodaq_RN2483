@@ -45,8 +45,8 @@
 
  //#define USE_DYNAMIC_BUFFER
 
-#define DEFAULT_INPUT_BUFFER_SIZE 64
-#define DEFAULT_RECEIVED_PAYLOAD_BUFFER_SIZE 32
+#define DEFAULT_INPUT_BUFFER_SIZE 512
+#define DEFAULT_RECEIVED_PAYLOAD_BUFFER_SIZE 256
 #define DEFAULT_TIMEOUT 120
 #define RECEIVE_TIMEOUT 60000
 #define DEFAULT_FSB 2
@@ -78,6 +78,14 @@ enum MacTransmitErrorCodes
     NotConnected = 7,
     NoAcknowledgment = 8,
 };
+
+typedef struct {
+    bool recv;
+    uint8_t port;
+    uint8_t len;
+    uint8_t payload[256];
+} downlink;
+
 
 // Provides a simple, abstracted interface to Microchip's RN2483 LoRaWAN module.
 //
@@ -111,6 +119,8 @@ public:
     // Performs a hardware reset (using the reset pin -if available).
     void hardwareReset();
 
+    downlink& recv();
+
     // Sends the given payload without acknowledgement.
     // Returns 0 (NoError) when transmission is successful or one of the MacTransmitErrorCodes otherwise.
     uint8_t send(uint8_t port, const uint8_t* payload, uint8_t size);
@@ -119,10 +129,7 @@ public:
     // Returns 0 (NoError) when transmission is successful or one of the MacTransmitErrorCodes otherwise.
     uint8_t sendReqAck(uint8_t port, const uint8_t* payload, uint8_t size, uint8_t maxRetries);
 
-    // Copies the latest received packet (optionally starting from the "payloadStartPosition"
-    // position of the payload) into the given "buffer", up to "size" number of bytes.
-    // Returns the number of bytes written or 0 if no packet is received since last transmission.
-    uint16_t receive(uint8_t* buffer, uint16_t size, uint16_t payloadStartPosition = 0);
+    //const downlink& getRX(){ return &received;}
 
     // Gets the preprogrammed EUI node address from the module.
     // Returns the number of bytes written or 0 in case of error.
@@ -136,7 +143,7 @@ public:
 
     // Sets the spreading factor.
     // In reality it sets the datarate of the module according to the
-    // LoraWAN specs mapping for 868MHz and 915MHz, 
+    // LoraWAN specs mapping for 868MHz and 915MHz,
     // using the given spreading factor parameter.
     bool setSpreadingFactor(uint8_t spreadingFactor);
 
@@ -160,6 +167,8 @@ public:
     bool setMacParam(const char* paramName, uint8_t paramValue);
     bool setMacParam(const char* paramName, const char* paramValue);
 
+    downlink received;
+
 #ifdef ENABLE_SLEEP
     // Wakes up the module from sleep (if supported).
     void wakeUp();
@@ -173,9 +182,6 @@ public:
     // Needs to be called before initOTA()/initABP().
     void setInputBufferSize(uint16_t value) { this->inputBufferSize = value; };
 
-    // Sets the size of the "Received Payload" buffer.
-    // Needs to be called before initOTA()/initABP().
-    void setReceivedPayloadBufferSize(uint16_t value) { this->receivedPayloadBufferSize = value; };
 #endif
 
     // Provides a quick test of several methods as a pseudo-unit test.
@@ -196,13 +202,10 @@ private:
     // by default or (optionally) a user-defined value when using USE_DYNAMIC_BUFFER.
     uint16_t receivedPayloadBufferSize;
 
-    // Flag used to make sure the received payload buffer is
-    // current with the latest transmission.
-    bool packetReceived;
-
-    // Used to distinguise between RN2483 and RN2903. 
+    // Used to distinguise between RN2483 and RN2903.
     // Currently only being set during reset().
     bool isRN2903;
+
 
 #ifdef USE_DYNAMIC_BUFFER
     // Flag to make sure the buffers are not allocated more than once.

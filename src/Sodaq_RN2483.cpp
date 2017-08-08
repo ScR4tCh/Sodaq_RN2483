@@ -23,7 +23,7 @@
 #include "Utils.h"
 #include <Sodaq_wdt.h>
 
-//#define DEBUG
+//#define DEBUG true
 
 #ifdef DEBUG
 #define debugPrintLn(...) do { if (this->diagStream) this->diagStream->println(__VA_ARGS__); } while(0)
@@ -49,7 +49,7 @@ Sodaq_RN2483::Sodaq_RN2483() :
     diagStream(0),
     inputBufferSize(DEFAULT_INPUT_BUFFER_SIZE),
     receivedPayloadBufferSize(DEFAULT_RECEIVED_PAYLOAD_BUFFER_SIZE),
-    packetReceived(false),
+    //packetReceived(false),
     isRN2903(false),
     resetPin(-1),
     _appendCommand(false)
@@ -94,6 +94,10 @@ bool Sodaq_RN2483::init(SerialType& stream, int8_t resetPin)
     }
 
     return resetDevice();
+}
+
+downlink& Sodaq_RN2483::recv(){
+    return this->received;
 }
 
 // Initializes the device and connects to the network using Over-The-Air Activation.
@@ -148,46 +152,6 @@ uint8_t Sodaq_RN2483::sendReqAck(uint8_t port, const uint8_t* payload,
     return macTransmit(STR_CONFIRMED, port, payload, size);
 }
 
-// Copies the latest received packet (optionally starting from the "payloadStartPosition"
-// position of the payload) into the given "buffer", up to "size" number of bytes.
-// Returns the number of bytes written or 0 if no packet is received since last transmission.
-uint16_t Sodaq_RN2483::receive(uint8_t* buffer, uint16_t size,
-    uint16_t payloadStartPosition)
-{
-    debugPrintLn("[receive]");
-
-    if (!this->packetReceived) {
-        debugPrintLn("[receive]: There is no packet received!");
-        return 0;
-    }
-
-    uint16_t inputIndex = payloadStartPosition * 2; // payloadStartPosition is in bytes, not hex char pairs
-    uint16_t outputIndex = 0;
-
-    // check that the asked starting position is within bounds
-    if (inputIndex >= this->receivedPayloadBufferSize) {
-        debugPrintLn("[receive]: Out of bounds start position!");
-        return 0;
-    }
-
-    // stop at the first string termination char, or if output buffer is over, or if payload buffer is over
-    while (outputIndex < size
-        && inputIndex + 1 < this->receivedPayloadBufferSize
-        && this->receivedPayloadBuffer[inputIndex] != 0
-        && this->receivedPayloadBuffer[inputIndex + 1] != 0) {
-        buffer[outputIndex] = HEX_PAIR_TO_BYTE(
-            this->receivedPayloadBuffer[inputIndex],
-            this->receivedPayloadBuffer[inputIndex + 1]);
-
-        inputIndex += 2;
-        outputIndex++;
-    }
-
-    // Note: if the payload has an odd length, the last char is discarded
-
-    debugPrintLn("[receive]: Done");
-    return outputIndex;
-}
 
 // Gets the preprogrammed EUI node address from the module.
 // Returns the number of bytes written or 0 in case of error.
@@ -224,7 +188,8 @@ uint8_t Sodaq_RN2483::getHWEUI(uint8_t* buffer, uint8_t size)
                 outputIndex++;
             }
 
-            debugPrint("[getHWEUI] count: "); debugPrintLn(outputIndex);
+            debugPrint("[getHWEUI] count: ");
+            debugPrintLn(outputIndex);
             return outputIndex;
         }
     }
@@ -547,7 +512,7 @@ bool Sodaq_RN2483::setFsbChannels(uint8_t fsb)
 
 // Sets the spreading factor.
 // In reality it sets the datarate of the module according to the
-// LoraWAN specs mapping for 868MHz and 915MHz, 
+// LoraWAN specs mapping for 868MHz and 915MHz,
 // using the given spreading factor parameter.
 bool Sodaq_RN2483::setSpreadingFactor(uint8_t spreadingFactor)
 {
@@ -745,7 +710,7 @@ uint8_t Sodaq_RN2483::macTransmit(const char* type, uint8_t port, const uint8_t*
         return lookupMacTransmitError(this->inputBuffer); // inputBuffer still has the last line read
     }
 
-    this->packetReceived = false; // prepare for receiving a new packet
+    this->received.recv = false; // prepare for receiving a new packet
 
     debugPrint("Waiting for server response");
     unsigned long start = millis();
@@ -796,14 +761,52 @@ uint8_t Sodaq_RN2483::onMacRX()
 
     // port
     token = strtok(NULL, " ");
+    this->received.port=atoi(token);
+
+    debugPrint("-> recv port : ");
+    debugPrintLn(this->received.port);
 
     // payload
     token = strtok(NULL, " "); // until end of string
 
     uint16_t len = strlen(token) + 1; // include termination char
-    memcpy(this->receivedPayloadBuffer, token, len <= this->receivedPayloadBufferSize ? len : this->receivedPayloadBufferSize);
 
-    this->packetReceived = true; // enable receive() again
+    int inputIndex=0;
+    int outputIndex=0;
+     // stop at the first string termination char, or if output buffer is over, or if payload buffer is over
+    while (outputIndex < 256
+        && inputIndex + 1 < len
+        && token[inputIndex] != 0
+        && token[inputIndex + 1] != 0) {
+        this->received.payload[outputIndex] = HEX_PAIR_TO_BYTE(
+            token[inputIndex],
+            token[inputIndex + 1]
+        );
+
+        debugPrint("payload idx: ");
+        debugPrint(inputIndex);
+        debugPrint(",");
+        debugPrint(inputIndex+1);
+        debugPrint(" ");
+        debugPrint(token[inputIndex]);
+        debugPrint(token[inputIndex+1]);
+        debugPrint(" -> ");
+        debugPrintLn(HEX_PAIR_TO_BYTE(
+            token[inputIndex],
+            token[inputIndex + 1]
+        ));
+
+
+        inputIndex += 2;
+        outputIndex++;
+    }
+
+    this->received.len=outputIndex;
+
+    debugPrint("-> recv length : ");
+    debugPrintLn(this->received.len);
+
+    this->received.recv = true; // enable receive() again
     return NoError;
 }
 
@@ -864,7 +867,7 @@ void Sodaq_RN2483::runTestSequence(SerialType& loraStream, Stream& debugStream)
     debugPrintLn("==== receive");
     char mockResult[] = "303132333435363738";
     memcpy(this->receivedPayloadBuffer, mockResult, strlen(mockResult) + 1);
-    uint8_t payload[64];
+    /*uint8_t payload[64];
     debugPrintLn("* without having received packet");
     uint8_t length = receive(payload, sizeof(payload));
     debugPrintLn(reinterpret_cast<char*>(payload));
@@ -872,7 +875,7 @@ void Sodaq_RN2483::runTestSequence(SerialType& loraStream, Stream& debugStream)
     debugPrintLn(length);
     debugPrintLn("* having received packet");
     this->packetReceived = true;
-    length = receive(payload, sizeof(payload));
+    //length = receive(payload, sizeof(payload));
     debugPrintLn(reinterpret_cast<char*>(payload));
     debugPrint("Length: ");
     debugPrintLn(length);
@@ -900,7 +903,7 @@ void Sodaq_RN2483::runTestSequence(SerialType& loraStream, Stream& debugStream)
         debugPrintLn("len is wrong!");
     }
     debugPrintLn(reinterpret_cast<char*>(payload2));
-
+    */
     debugPrint("free ram: ");
     debugPrintLn(freeRam());
 
